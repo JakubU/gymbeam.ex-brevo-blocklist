@@ -1,0 +1,1 @@
+https://github.com/JakubU/gymbeam.ex-brevo-blocklist/blob/master/LICENSE.md
