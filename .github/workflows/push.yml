@@ -1,9 +1,6 @@
 name: Keboola Component Build & Deploy Pipeline
-
 on: [ push ]
-
 concurrency: ci-${{ github.ref }} # to avoid tag collisions in the ECR
-
 env:
   # repository variables:
   DOCKERHUB_USER: ${{ vars.DOCKERHUB_USER }}
@@ -95,7 +92,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          tags: ${{ vars.DOCKERHUB_USER }}/${{ vars.KBC_DEVELOPERPORTAL_APP }}:latest
+          tags: ${{ vars.KBC_DEVELOPERPORTAL_APP }}:latest
           outputs: type=docker,dest=/tmp/${{ vars.KBC_DEVELOPERPORTAL_APP }}.tar
 
       - name: Upload artifact
@@ -124,9 +121,9 @@ jobs:
         run: |
           docker load --input /tmp/${{ vars.KBC_DEVELOPERPORTAL_APP }}.tar
           docker image ls -a
-          docker run ${{ vars.DOCKERHUB_USER }}/${{ vars.KBC_DEVELOPERPORTAL_APP }}:latest flake8 . --config=flake8.cfg
+          docker run ${{ vars.KBC_DEVELOPERPORTAL_APP }}:latest flake8 . --config=flake8.cfg
           echo "Running unit-tests..."
-          docker run ${{ vars.DOCKERHUB_USER }}/${{ vars.KBC_DEVELOPERPORTAL_APP }}:latest python -m unittest discover
+          docker run ${{ vars.KBC_DEVELOPERPORTAL_APP }}:latest python -m unittest discover
 
   tests-kbc:
     name: Run KBC Tests
@@ -184,7 +181,7 @@ jobs:
           password: ${{ secrets.KBC_DEVELOPERPORTAL_PASSWORD }}
           tag: ${{ needs.push_event_info.outputs.app_image_tag }}
           push_latest: ${{ needs.push_event_info.outputs.is_deploy_ready }}
-          source_image: ${{ vars.DOCKERHUB_USER }}/${{ vars.KBC_DEVELOPERPORTAL_APP }}
+          source_image: ${{ vars.KBC_DEVELOPERPORTAL_APP }}
 
   deploy:
     name: Deploy to KBC
