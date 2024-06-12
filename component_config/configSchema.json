@@ -2,18 +2,14 @@
   "type": "object",
   "title": "extractor configuration",
   "required": [
-    "print_hello"
   ],
   "properties": {
-    "print_hello": {
-      "type": "boolean",
-      "title": "Print Hello",
+    "#api_token": {
+      "type": "string",
+      "title": "Brevo Api Token",
+      "format": "password",
       "propertyOrder": 1
-    },
-    "debug": {
-      "type": "boolean",
-      "title": "Debug",
-      "propertyOrder": 2
-    }
   }
 }
+}
+
