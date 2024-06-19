@@ -13,6 +13,7 @@ KEY_END_DATE = 'end_date'
 
 BREVO_API_ENDPOINT = "https://api.brevo.com/v3/smtp/blockedContacts"
 
+
 class Component(ComponentBase):
     """
     Extends base class for general Python components. Initializes the CommonInterface
@@ -47,16 +48,17 @@ class Component(ComponentBase):
 
         # Fetch blocked contacts data from Brevo API
         blocked_contacts_df = self.get_blocked_contacts()
-        
+
         # Create output table (Tabledefinition - just metadata)
-        table = self.create_out_table_definition('blocked_contacts.csv', incremental=True, primary_key=['email'])
-        
+        table = self.create_out_table_definition(
+            'blocked_contacts.csv', incremental=True, primary_key=['email'])
+
         # Get file path of the table (data/out/tables/blocked_contacts.csv)
         out_table_path = table.full_path
-        
+
         # Save data to CSV
         self.save_to_csv(blocked_contacts_df, out_table_path)
-        
+
         # Save the state (if needed)
         self.write_state_file({"last_run": datetime.utcnow().isoformat()})
 
@@ -69,12 +71,16 @@ class Component(ComponentBase):
             "offset": 0,
             "sort": "desc"
         }
-        logging.info(f"Fetching total number of records from {BREVO_API_ENDPOINT} with params {params}")
-        response = requests.get(BREVO_API_ENDPOINT, headers=headers, params=params)
+        logging.info(
+            f"Fetching total number of records from {BREVO_API_ENDPOINT} with params {params}")
+        response = requests.get(
+            BREVO_API_ENDPOINT, headers=headers, params=params)
         if response.status_code != 200:
-            logging.error(f"Error fetching total records: {response.status_code} {response.text}")
-            raise UserException(f"Error fetching total records: {response.status_code} {response.text}")
-        
+            logging.error(
+                f"Error fetching total records: {response.status_code} {response.text}")
+            raise UserException(
+                f"Error fetching total records: {response.status_code} {response.text}")
+
         data = response.json()
         total_records = data.get('count', 0)
         logging.info(f"Total records to fetch: {total_records}")
@@ -97,12 +103,14 @@ class Component(ComponentBase):
         stop_fetching = False
 
         with ThreadPoolExecutor(max_workers=100) as executor:
-            futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers): offset for offset in offsets}
+            futures = {executor.submit(
+                self.fetch_contacts_batch, offset, batch_size, headers): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
                     contacts = future.result()
                     if not contacts:  # If no contacts were returned, stop further requests
-                        logging.info(f"No more contacts to fetch at offset {future.key}. Stopping further requests.")
+                        logging.info(
+                            f"No more contacts to fetch at offset {future.key}. Stopping further requests.")
                         stop_fetching = True
                         break
                     all_contacts.extend(contacts)
@@ -116,7 +124,8 @@ class Component(ComponentBase):
 
         # Remove duplicates if any
         df = pd.DataFrame(all_contacts).drop_duplicates(subset='email')
-        logging.info(f"Total unique contacts after removing duplicates: {len(df)}")
+        logging.info(
+            f"Total unique contacts after removing duplicates: {len(df)}")
 
         return df
 
@@ -131,25 +140,32 @@ class Component(ComponentBase):
         }
         attempts = 3
         while attempts > 0:
-            logging.info(f"Fetching contacts from {BREVO_API_ENDPOINT} with params: {params}")
-            response = requests.get(BREVO_API_ENDPOINT, headers=headers, params=params)
+            logging.info(
+                f"Fetching contacts from {BREVO_API_ENDPOINT} with params: {params}")
+            response = requests.get(
+                BREVO_API_ENDPOINT, headers=headers, params=params)
             if response.status_code == 200:
                 data = response.json()
                 contacts = data.get('contacts', [])
                 # Filter out contacts without email
-                valid_contacts = [contact for contact in contacts if contact.get('email') is not None]
-                logging.info(f"Fetched {len(valid_contacts)} valid contacts at offset {offset}")
+                valid_contacts = [
+                    contact for contact in contacts if contact.get('email') is not None]
+                logging.info(
+                    f"Fetched {len(valid_contacts)} valid contacts at offset {offset}")
                 return valid_contacts
             elif response.status_code == 404:
                 # Stop retrying if a 404 is encountered
-                logging.warning(f"Offset {offset} returned 404 Not Found, stopping retries.")
+                logging.warning(
+                    f"Offset {offset} returned 404 Not Found, stopping retries.")
                 break
             else:
-                logging.error(f"Error fetching data: {response.status_code} {response.text}")
+                logging.error(
+                    f"Error fetching data: {response.status_code} {response.text}")
                 attempts -= 1
                 logging.info(f"Retrying... {3 - attempts} of 3 attempts left")
 
-        logging.warning(f"Failed to fetch contacts at offset {offset} after 3 attempts")
+        logging.warning(
+            f"Failed to fetch contacts at offset {offset} after 3 attempts")
         return []
 
     def save_to_csv(self, df, file_path):
@@ -159,9 +175,12 @@ class Component(ComponentBase):
         df.to_csv(file_path, index=False)
         logging.info(f"Data saved to {file_path}")
 
+
 """
 Main entrypoint
 """
+
+
 if __name__ == "__main__":
     try:
         comp = Component()
