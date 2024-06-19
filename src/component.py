@@ -122,10 +122,9 @@ class Component(ComponentBase):
         # Log the number of records fetched
         logging.info(f"Total fetched contacts: {len(all_contacts)}")
 
-        # Remove duplicates if any
-        df = pd.DataFrame(all_contacts).drop_duplicates(subset='email')
-        logging.info(
-            f"Total unique contacts after removing duplicates: {len(df)}")
+        # Create DataFrame without removing duplicates
+        df = pd.DataFrame(all_contacts)
+        logging.info(f"Total contacts in DataFrame: {len(df)}")
 
         return df
 
@@ -179,7 +178,6 @@ class Component(ComponentBase):
 """
 Main entrypoint
 """
-
 
 if __name__ == "__main__":
     try:
