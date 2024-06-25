@@ -9,7 +9,21 @@
       "title": "Brevo Api Token",
       "format": "password",
       "propertyOrder": 1
-  }
+  },
+  "transactional": {
+    "type": "boolean",
+    "title": "Download blocked or unsubscribed transactional contacts",
+    "default": false,
+    "format": "checkbox",
+    "propertyOrder": 2
+},
+"marketing": {
+    "type": "boolean",
+    "title": "Download blocked or unsubscribed marketing contacts",
+    "default": false,
+    "format": "checkbox",
+    "propertyOrder": 3
+}
 }
 }
 
