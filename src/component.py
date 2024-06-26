@@ -44,7 +44,6 @@ class Component(ComponentBase):
             self.write_state_file({"last_run": datetime.utcnow().isoformat()})
         else:
             logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")
-        
         if self.marketing:
             marketing_contacts_df = self.get_marketing_contacts()
             self.save_to_csv(marketing_contacts_df, 'marketing_contacts.csv')
@@ -155,7 +154,7 @@ class Component(ComponentBase):
                 logging.info(f"Fetched {len(valid_contacts)} valid contacts at offset {offset}")
                 return valid_contacts
             except requests.RequestException as e:
-                logging.error(f"Error fetching data: {response.status_code} {response.text}")
+                logging.error(f"Error fetching data: {e}")
                 attempts -= 1
                 if attempts > 0:
                     time.sleep(2 ** (3 - attempts))  # Exponential backoff
@@ -173,7 +172,7 @@ class Component(ComponentBase):
         table = self.create_out_table_definition(file_path, incremental=True)
         out_table_path = table.full_path
         logging.info(f"Output table definition created at {out_table_path}")
-        
+
 
 """
 Main entrypoint
