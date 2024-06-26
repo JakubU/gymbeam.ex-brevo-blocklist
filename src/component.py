@@ -1,3 +1,4 @@
+import os
 import requests
 import pandas as pd
 import logging
@@ -10,76 +11,55 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 KEY_API_TOKEN = '#api_token'
 KEY_START_DATE = 'start_date'
 KEY_END_DATE = 'end_date'
+KEY_TRANSACTIONAL = 'transactional'
+KEY_MARKETING = 'marketing'
 
-BREVO_API_ENDPOINT = "https://api.brevo.com/v3/smtp/blockedContacts"
-
+BREVO_TRANSACTIONAL_ENDPOINT = "https://api.brevo.com/v3/smtp/blockedContacts"
+BREVO_MARKETING_ENDPOINT = "https://api.brevo.com/v3/contacts"
 
 class Component(ComponentBase):
-    """
-    Extends base class for general Python components. Initializes the CommonInterface
-    and performs configuration validation.
-
-    For easier debugging the data folder is picked up by default from `../data` path,
-    relative to working directory.
-
-    If `debug` parameter is present in the `config.json`, the default logger is set to verbose DEBUG mode.
-    """
-
     def __init__(self):
         super().__init__()
         self.setup_logging()
 
     def setup_logging(self):
-        # Configure logging format and level
-        logging.basicConfig(level=logging.INFO,
-                            format='%(asctime)s - %(levelname)s - %(message)s')
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
     def run(self):
-        """
-        Main execution code
-        """
         params = self.configuration.parameters
         self.api_token = params.get(KEY_API_TOKEN)
         self.start_date = params.get(KEY_START_DATE)
         self.end_date = params.get(KEY_END_DATE)
+        self.transactional = params.get(KEY_TRANSACTIONAL)
+        self.marketing = params.get(KEY_MARKETING)
 
         if not self.api_token:
             raise UserException("API token is missing in the configuration.")
 
-        # Fetch blocked contacts data from Brevo API
-        blocked_contacts_df = self.get_blocked_contacts()
+        if self.transactional:
+            blocked_contacts_df = self.get_blocked_contacts()
+            self.save_to_csv(blocked_contacts_df, 'blocked_contacts.csv')
+            self.write_state_file({"last_run": datetime.utcnow().isoformat()})
+        else:
+            logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")
+        
+        if self.marketing:
+            marketing_contacts_df = self.get_marketing_contacts()
+            self.save_to_csv(marketing_contacts_df, 'marketing_contacts.csv')
+            self.write_state_file({"last_run": datetime.utcnow().isoformat()})
+        else:
+            logging.info("Marketing parameter is not set to true. Skipping the data fetch process for marketing contacts.")
 
-        # Create output table (Tabledefinition - just metadata)
-        table = self.create_out_table_definition(
-            'blocked_contacts.csv', incremental=True, primary_key=['email'])
+    def get_total_records(self, headers, endpoint, segment_id=None):
+        params = {"limit": 1, "offset": 0}
+        if segment_id:
+            params['segmentId'] = segment_id
 
-        # Get file path of the table (data/out/tables/blocked_contacts.csv)
-        out_table_path = table.full_path
-
-        # Save data to CSV
-        self.save_to_csv(blocked_contacts_df, out_table_path)
-
-        # Save the state (if needed)
-        self.write_state_file({"last_run": datetime.utcnow().isoformat()})
-
-    def get_total_records(self, headers):
-        """
-        Fetch total number of blocked contacts
-        """
-        params = {
-            "limit": 1,  # Fetch only one record to get total count
-            "offset": 0,
-            "sort": "desc"
-        }
-        logging.info(
-            f"Fetching total number of records from {BREVO_API_ENDPOINT} with params {params}")
-        response = requests.get(
-            BREVO_API_ENDPOINT, headers=headers, params=params)
+        logging.info(f"Fetching total number of records from {endpoint} with params {params}")
+        response = requests.get(endpoint, headers=headers, params=params)
         if response.status_code != 200:
-            logging.error(
-                f"Error fetching total records: {response.status_code} {response.text}")
-            raise UserException(
-                f"Error fetching total records: {response.status_code} {response.text}")
+            logging.error(f"Error fetching total records: {response.status_code} {response.text}")
+            raise UserException(f"Error fetching total records: {response.status_code} {response.text}")
 
         data = response.json()
         total_records = data.get('count', 0)
@@ -87,30 +67,22 @@ class Component(ComponentBase):
         return total_records
 
     def get_blocked_contacts(self):
-        """
-        Fetch blocked contacts from Brevo API and return as DataFrame
-        """
-        headers = {
-            "api-key": self.api_token,
-            "accept": "application/json"
-        }
-
-        total_records = self.get_total_records(headers)
-        batch_size = 100  # Fetch 100 records at a time
+        headers = {"api-key": self.api_token, "accept": "application/json"}
+        total_records = self.get_total_records(headers, BREVO_TRANSACTIONAL_ENDPOINT)
+        batch_size = 100
         all_contacts = []
 
-        offsets = range(0, total_records, batch_size)
+        offsets = 0,1000
+        #offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
         with ThreadPoolExecutor(max_workers=100) as executor:
-            futures = {executor.submit(
-                self.fetch_contacts_batch, offset, batch_size, headers): offset for offset in offsets}
+            futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_TRANSACTIONAL_ENDPOINT): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
                     contacts = future.result()
-                    if not contacts:  # If no contacts were returned, stop further requests
-                        logging.info(
-                            f"No more contacts to fetch at offset {future.key}. Stopping further requests.")
+                    if not contacts:
+                        logging.info(f"No more contacts to fetch at offset {future.key}. Stopping further requests.")
                         stop_fetching = True
                         break
                     all_contacts.extend(contacts)
@@ -119,61 +91,78 @@ class Component(ComponentBase):
                 if stop_fetching:
                     break
 
-        # Log the number of records fetched
         logging.info(f"Total fetched contacts: {len(all_contacts)}")
-
-        # Create DataFrame without removing duplicates
         df = pd.DataFrame(all_contacts)
         logging.info(f"Total contacts in DataFrame: {len(df)}")
-
         return df
 
-    def fetch_contacts_batch(self, offset, batch_size, headers):
-        """
-        Fetch a batch of blocked contacts from Brevo API
-        """
-        params = {
-            "limit": batch_size,
-            "offset": offset,
-            "sort": "desc"
-        }
+    def get_marketing_contacts(self):
+        headers = {"api-key": self.api_token, "accept": "application/json"}
+        segment_id = 8
+        total_records = self.get_total_records(headers, BREVO_MARKETING_ENDPOINT, segment_id)
+        batch_size = 1000
+        all_contacts = []
+
+        #offsets = 0,1000
+        offsets = range(0, total_records, batch_size)
+        stop_fetching = False
+
+        with ThreadPoolExecutor(max_workers=100) as executor:
+            futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_MARKETING_ENDPOINT, segment_id): offset for offset in offsets}
+            for future in as_completed(futures):
+                try:
+                    contacts = future.result()
+                    if not contacts:
+                        logging.info(f"No more contacts to fetch at offset {future.key}. Stopping further requests.")
+                        stop_fetching = True
+                        break
+                    all_contacts.extend(contacts)
+                except Exception as e:
+                    logging.error(f"Error fetching data: {e}")
+                if stop_fetching:
+                    break
+
+        logging.info(f"Total fetched contacts: {len(all_contacts)}")
+        df = pd.DataFrame(all_contacts, columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt'])
+        logging.info(f"Total contacts in DataFrame: {len(df)}")
+        return df
+
+    def fetch_contacts_batch(self, offset, batch_size, headers, endpoint, segment_id=None):
+        params = {"limit": batch_size, "offset": offset, "sort": "desc"}
+        if segment_id:
+            params['segmentId'] = segment_id
+
         attempts = 3
         while attempts > 0:
-            logging.info(
-                f"Fetching contacts from {BREVO_API_ENDPOINT} with params: {params}")
-            response = requests.get(
-                BREVO_API_ENDPOINT, headers=headers, params=params)
+            logging.info(f"Fetching contacts from {endpoint} with params: {params}")
+            response = requests.get(endpoint, headers=headers, params=params)
             if response.status_code == 200:
                 data = response.json()
                 contacts = data.get('contacts', [])
-                # Filter out contacts without email
-                valid_contacts = [
-                    contact for contact in contacts if contact.get('email') is not None]
-                logging.info(
-                    f"Fetched {len(valid_contacts)} valid contacts at offset {offset}")
+                valid_contacts = [contact for contact in contacts if contact.get('email') is not None]
+                logging.info(f"Fetched {len(valid_contacts)} valid contacts at offset {offset}")
                 return valid_contacts
             elif response.status_code == 404:
-                # Stop retrying if a 404 is encountered
-                logging.warning(
-                    f"Offset {offset} returned 404 Not Found, stopping retries.")
+                logging.warning(f"Offset {offset} returned 404 Not Found, stopping retries.")
                 break
             else:
-                logging.error(
-                    f"Error fetching data: {response.status_code} {response.text}")
+                logging.error(f"Error fetching data: {response.status_code} {response.text}")
                 attempts -= 1
                 logging.info(f"Retrying... {3 - attempts} of 3 attempts left")
 
-        logging.warning(
-            f"Failed to fetch contacts at offset {offset} after 3 attempts")
+        logging.warning(f"Failed to fetch contacts at offset {offset} after 3 attempts")
         return []
 
     def save_to_csv(self, df, file_path):
-        """
-        Save DataFrame to CSV
-        """
-        df.to_csv(file_path, index=False)
-        logging.info(f"Data saved to {file_path}")
+        output_directory = 'data/out/tables'
+        os.makedirs(output_directory, exist_ok=True)
+        full_path = os.path.join(output_directory, file_path)
+        df.to_csv(full_path, index=False)
+        logging.info(f"Data saved to {full_path}")
 
+        table = self.create_out_table_definition(file_path, incremental=True)
+        out_table_path = table.full_path
+        logging.info(f"Output table definition created at {out_table_path}")
 
 """
 Main entrypoint
@@ -182,7 +171,6 @@ Main entrypoint
 if __name__ == "__main__":
     try:
         comp = Component()
-        # This triggers the run method by default and is controlled by the configuration.action parameter
         comp.execute_action()
     except UserException as exc:
         logging.exception(exc)

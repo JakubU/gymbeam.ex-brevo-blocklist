@@ -12,14 +12,14 @@
   },
   "transactional": {
     "type": "boolean",
-    "title": "Download blocked or unsubscribed transactional contacts",
+    "title": "Download blocked or unsubscribed transactional email contacts",
     "default": false,
     "format": "checkbox",
     "propertyOrder": 2
 },
 "marketing": {
     "type": "boolean",
-    "title": "Download blocked or unsubscribed marketing contacts",
+    "title": "Download blocked or unsubscribed marketing email contacts",
     "default": false,
     "format": "checkbox",
     "propertyOrder": 3
