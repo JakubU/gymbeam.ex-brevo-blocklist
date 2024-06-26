@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import pandas as pd
 import logging
@@ -55,16 +56,25 @@ class Component(ComponentBase):
         if segment_id:
             params['segmentId'] = segment_id
 
-        logging.info(f"Fetching total number of records from {endpoint} with params {params}")
-        response = requests.get(endpoint, headers=headers, params=params)
-        if response.status_code != 200:
-            logging.error(f"Error fetching total records: {response.status_code} {response.text}")
-            raise UserException(f"Error fetching total records: {response.status_code} {response.text}")
+        attempts = 3
+        while attempts > 0:
+            try:
+                logging.info(f"Fetching total number of records from {endpoint} with params {params}")
+                response = requests.get(endpoint, headers=headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+                total_records = data.get('count', 0)
+                logging.info(f"Total records to fetch: {total_records}")
+                return total_records
+            except requests.RequestException as e:
+                logging.error(f"Error fetching total records: {e}")
+                attempts -= 1
+                if attempts > 0:
+                    time.sleep(2 ** (3 - attempts))  # Exponential backoff
+                else:
+                    raise UserException(f"Error fetching total records after multiple attempts: {e}")
 
-        data = response.json()
-        total_records = data.get('count', 0)
-        logging.info(f"Total records to fetch: {total_records}")
-        return total_records
+        return 0
 
     def get_blocked_contacts(self):
         headers = {"api-key": self.api_token, "accept": "application/json"}
@@ -72,11 +82,11 @@ class Component(ComponentBase):
         batch_size = 100
         all_contacts = []
 
-        offsets = 0,1000
-        #offsets = range(0, total_records, batch_size)
+        total_records = 10000
+        offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
-        with ThreadPoolExecutor(max_workers=100) as executor:
+        with ThreadPoolExecutor(max_workers=60) as executor:
             futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_TRANSACTIONAL_ENDPOINT): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
@@ -103,11 +113,11 @@ class Component(ComponentBase):
         batch_size = 1000
         all_contacts = []
 
-        #offsets = 0,1000
+        total_records = 100000
         offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
-        with ThreadPoolExecutor(max_workers=100) as executor:
+        with ThreadPoolExecutor(max_workers=60) as executor:
             futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_MARKETING_ENDPOINT, segment_id): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
@@ -134,24 +144,23 @@ class Component(ComponentBase):
 
         attempts = 3
         while attempts > 0:
-            logging.info(f"Fetching contacts from {endpoint} with params: {params}")
-            response = requests.get(endpoint, headers=headers, params=params)
-            if response.status_code == 200:
+            try:
+                logging.info(f"Fetching contacts from {endpoint} with params: {params}")
+                response = requests.get(endpoint, headers=headers, params=params)
+                response.raise_for_status()
                 data = response.json()
                 contacts = data.get('contacts', [])
                 valid_contacts = [contact for contact in contacts if contact.get('email') is not None]
                 logging.info(f"Fetched {len(valid_contacts)} valid contacts at offset {offset}")
                 return valid_contacts
-            elif response.status_code == 404:
-                logging.warning(f"Offset {offset} returned 404 Not Found, stopping retries.")
-                break
-            else:
+            except requests.RequestException as e:
                 logging.error(f"Error fetching data: {response.status_code} {response.text}")
                 attempts -= 1
-                logging.info(f"Retrying... {3 - attempts} of 3 attempts left")
-
-        logging.warning(f"Failed to fetch contacts at offset {offset} after 3 attempts")
-        return []
+                if attempts > 0:
+                    time.sleep(2 ** (3 - attempts))  # Exponential backoff
+                else:
+                    logging.warning(f"Failed to fetch contacts at offset {offset} after multiple attempts")
+                    return []
 
     def save_to_csv(self, df, file_path):
         output_directory = 'data/out/tables'
