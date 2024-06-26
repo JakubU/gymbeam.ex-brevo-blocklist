@@ -1,4 +1,3 @@
-import os
 import time
 import requests
 import pandas as pd
@@ -40,13 +39,13 @@ class Component(ComponentBase):
 
         if self.transactional:
             blocked_contacts_df = self.get_blocked_contacts()
-            self.save_to_csv(blocked_contacts_df, 'blocked_contacts.csv')
+            self.process_data(blocked_contacts_df, 'transactional_contacts.csv', [])
             self.write_state_file({"last_run": datetime.utcnow().isoformat()})
         else:
-            logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")
+            logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")       
         if self.marketing:
             marketing_contacts_df = self.get_marketing_contacts()
-            self.save_to_csv(marketing_contacts_df, 'marketing_contacts.csv')
+            self.process_data(marketing_contacts_df, 'marketing_contacts.csv', [])
             self.write_state_file({"last_run": datetime.utcnow().isoformat()})
         else:
             logging.info("Marketing parameter is not set to true. Skipping the data fetch process for marketing contacts.")
@@ -82,11 +81,11 @@ class Component(ComponentBase):
         batch_size = 100
         all_contacts = []
 
-        #total_records = 10000
+        # total_records = 10000
         offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
-        with ThreadPoolExecutor(max_workers=60) as executor:
+        with ThreadPoolExecutor(max_workers=70) as executor:
             futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_TRANSACTIONAL_ENDPOINT): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
@@ -113,11 +112,11 @@ class Component(ComponentBase):
         batch_size = 1000
         all_contacts = []
 
-        #total_records = 100000
+        # total_records = 100000
         offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
-        with ThreadPoolExecutor(max_workers=60) as executor:
+        with ThreadPoolExecutor(max_workers=70) as executor:
             futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_MARKETING_ENDPOINT, segment_id): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
@@ -162,16 +161,16 @@ class Component(ComponentBase):
                     logging.warning(f"Failed to fetch contacts at offset {offset} after multiple attempts")
                     return []
 
-    def save_to_csv(self, df, file_path):
-        output_directory = 'data/out/tables'
-        os.makedirs(output_directory, exist_ok=True)
-        full_path = os.path.join(output_directory, file_path)
-        df.to_csv(full_path, index=False)
-        logging.info(f"Data saved to {full_path}")
-
-        table = self.create_out_table_definition(file_path, incremental=True)
-        out_table_path = table.full_path
-        logging.info(f"Output table definition created at {out_table_path}")
+    def process_data(self, df, file_name, primary_keys):
+        # Process and save data to a file
+        logging.info(f"Processing {len(df)} records to write to {file_name}.")
+        if not df.empty:
+            table_path = self.create_out_table_definition(
+                file_name, incremental=True, primary_key=primary_keys).full_path
+            df.to_csv(table_path, index=False)
+            logging.info(f"File {file_name} created and data written successfully.")
+        else:
+            logging.warning(f"No data available to write to {file_name}. DataFrame is empty.")
 
 
 """
