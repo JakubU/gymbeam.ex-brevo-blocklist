@@ -18,6 +18,7 @@ KEY_MARKETING = 'marketing'
 BREVO_TRANSACTIONAL_ENDPOINT = "https://api.brevo.com/v3/smtp/blockedContacts"
 BREVO_MARKETING_ENDPOINT = "https://api.brevo.com/v3/contacts"
 
+
 class Component(ComponentBase):
     def __init__(self):
         super().__init__()
@@ -172,6 +173,7 @@ class Component(ComponentBase):
         table = self.create_out_table_definition(file_path, incremental=True)
         out_table_path = table.full_path
         logging.info(f"Output table definition created at {out_table_path}")
+        
 
 """
 Main entrypoint
