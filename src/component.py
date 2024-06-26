@@ -42,7 +42,7 @@ class Component(ComponentBase):
             self.process_data(blocked_contacts_df, 'transactional_contacts.csv', [])
             self.write_state_file({"last_run": datetime.utcnow().isoformat()})
         else:
-            logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")       
+            logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")
         if self.marketing:
             marketing_contacts_df = self.get_marketing_contacts()
             self.process_data(marketing_contacts_df, 'marketing_contacts.csv', [])
