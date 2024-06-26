@@ -82,7 +82,7 @@ class Component(ComponentBase):
         batch_size = 100
         all_contacts = []
 
-        total_records = 10000
+        #total_records = 10000
         offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
@@ -113,7 +113,7 @@ class Component(ComponentBase):
         batch_size = 1000
         all_contacts = []
 
-        total_records = 100000
+        #total_records = 100000
         offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
