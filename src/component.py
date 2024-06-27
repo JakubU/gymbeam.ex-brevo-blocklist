@@ -6,6 +6,8 @@ from datetime import datetime
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import gc
+import os
 
 # Configuration variables
 KEY_API_TOKEN = '#api_token'
@@ -38,14 +40,12 @@ class Component(ComponentBase):
             raise UserException("API token is missing in the configuration.")
 
         if self.transactional:
-            blocked_contacts_df = self.get_blocked_contacts()
-            self.process_data(blocked_contacts_df, 'transactional_contacts.csv', [])
+            self.get_blocked_contacts()
             self.write_state_file({"last_run": datetime.utcnow().isoformat()})
         else:
             logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")
         if self.marketing:
-            marketing_contacts_df = self.get_marketing_contacts()
-            self.process_data(marketing_contacts_df, 'marketing_contacts.csv', [])
+            self.get_marketing_contacts()
             self.write_state_file({"last_run": datetime.utcnow().isoformat()})
         else:
             logging.info("Marketing parameter is not set to true. Skipping the data fetch process for marketing contacts.")
@@ -79,13 +79,10 @@ class Component(ComponentBase):
         headers = {"api-key": self.api_token, "accept": "application/json"}
         total_records = self.get_total_records(headers, BREVO_TRANSACTIONAL_ENDPOINT)
         batch_size = 100
-        all_contacts = []
-
-        # total_records = 10000
         offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
-        with ThreadPoolExecutor(max_workers=70) as executor:
+        with ThreadPoolExecutor(max_workers=20) as executor:
             futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_TRANSACTIONAL_ENDPOINT): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
@@ -94,29 +91,23 @@ class Component(ComponentBase):
                         logging.info(f"No more contacts to fetch at offset {future.key}. Stopping further requests.")
                         stop_fetching = True
                         break
-                    all_contacts.extend(contacts)
+                    df = pd.DataFrame(contacts)
+                    self.process_data(df, 'transactional_contacts.csv', [])
+                    gc.collect()  # Explicitly trigger garbage collection
                 except Exception as e:
                     logging.error(f"Error fetching data: {e}")
                 if stop_fetching:
                     break
-
-        logging.info(f"Total fetched contacts: {len(all_contacts)}")
-        df = pd.DataFrame(all_contacts)
-        logging.info(f"Total contacts in DataFrame: {len(df)}")
-        return df
 
     def get_marketing_contacts(self):
         headers = {"api-key": self.api_token, "accept": "application/json"}
         segment_id = 8
         total_records = self.get_total_records(headers, BREVO_MARKETING_ENDPOINT, segment_id)
         batch_size = 1000
-        all_contacts = []
-
-        # total_records = 100000
         offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
-        with ThreadPoolExecutor(max_workers=70) as executor:
+        with ThreadPoolExecutor(max_workers=20) as executor:
             futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_MARKETING_ENDPOINT, segment_id): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
@@ -125,16 +116,13 @@ class Component(ComponentBase):
                         logging.info(f"No more contacts to fetch at offset {future.key}. Stopping further requests.")
                         stop_fetching = True
                         break
-                    all_contacts.extend(contacts)
+                    df = pd.DataFrame(contacts, columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt'])
+                    self.process_data(df, 'marketing_contacts.csv', [])
+                    gc.collect()  # Explicitly trigger garbage collection
                 except Exception as e:
                     logging.error(f"Error fetching data: {e}")
                 if stop_fetching:
                     break
-
-        logging.info(f"Total fetched contacts: {len(all_contacts)}")
-        df = pd.DataFrame(all_contacts, columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt'])
-        logging.info(f"Total contacts in DataFrame: {len(df)}")
-        return df
 
     def fetch_contacts_batch(self, offset, batch_size, headers, endpoint, segment_id=None):
         params = {"limit": batch_size, "offset": offset, "sort": "desc"}
@@ -165,9 +153,12 @@ class Component(ComponentBase):
         # Process and save data to a file
         logging.info(f"Processing {len(df)} records to write to {file_name}.")
         if not df.empty:
-            table_path = self.create_out_table_definition(
-                file_name, incremental=True, primary_key=primary_keys).full_path
-            df.to_csv(table_path, index=False)
+            table_path = self.create_out_table_definition(file_name, incremental=True, primary_key=primary_keys).full_path
+            # Check if file exists
+            if os.path.exists(table_path):
+                df.to_csv(table_path, mode='a', header=False, index=False)
+            else:
+                df.to_csv(table_path, index=False)
             logging.info(f"File {file_name} created and data written successfully.")
         else:
             logging.warning(f"No data available to write to {file_name}. DataFrame is empty.")
