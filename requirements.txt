@@ -5,4 +5,3 @@ mock
 freezegun
 requests
 pandas
-gc
