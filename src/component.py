@@ -82,7 +82,7 @@ class Component(ComponentBase):
         offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
+        with ThreadPoolExecutor(max_workers=10) as executor:  # Reduced number of threads
             futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_TRANSACTIONAL_ENDPOINT): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
@@ -93,6 +93,7 @@ class Component(ComponentBase):
                         break
                     df = pd.DataFrame(contacts)
                     self.process_data(df, 'transactional_contacts.csv', [])
+                    df = None  # Clear DataFrame from memory
                     gc.collect()  # Explicitly trigger garbage collection
                 except Exception as e:
                     logging.error(f"Error fetching data: {e}")
@@ -107,7 +108,7 @@ class Component(ComponentBase):
         offsets = range(0, total_records, batch_size)
         stop_fetching = False
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
+        with ThreadPoolExecutor(max_workers=10) as executor:  # Reduced number of threads
             futures = {executor.submit(self.fetch_contacts_batch, offset, batch_size, headers, BREVO_MARKETING_ENDPOINT, segment_id): offset for offset in offsets}
             for future in as_completed(futures):
                 try:
@@ -118,6 +119,7 @@ class Component(ComponentBase):
                         break
                     df = pd.DataFrame(contacts, columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt'])
                     self.process_data(df, 'marketing_contacts.csv', [])
+                    df = None  # Clear DataFrame from memory
                     gc.collect()  # Explicitly trigger garbage collection
                 except Exception as e:
                     logging.error(f"Error fetching data: {e}")
