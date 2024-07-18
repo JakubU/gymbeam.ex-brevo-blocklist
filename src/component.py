@@ -1,3 +1,4 @@
+import os
 import time
 import requests
 import pandas as pd
@@ -9,6 +10,7 @@ import queue
 import gc
 import aiohttp
 import asyncio
+from keboola.component import CommonInterface
 
 # Configuration variables
 KEY_API_TOKEN = '#api_token'
@@ -20,11 +22,16 @@ KEY_MARKETING = 'marketing'
 BREVO_TRANSACTIONAL_ENDPOINT = "https://api.brevo.com/v3/smtp/blockedContacts"
 BREVO_MARKETING_ENDPOINT = "https://api.brevo.com/v3/contacts"
 
+# Set the data directory for local testing
+# if not os.path.exists('/data/'):
+#    os.environ['KBC_DATADIR'] = './data'
+
 
 class Component(ComponentBase):
     def __init__(self):
         super().__init__()
         self.setup_logging()
+        self.ci = CommonInterface()
 
     def setup_logging(self):
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -42,10 +49,10 @@ class Component(ComponentBase):
             raise UserException("API token is missing in the configuration.")
 
         if self.transactional:
-            logging.info("Starting to fetch blocked contacts")
+            logging.info("Starting to fetch transactional contacts")
             self.get_blocked_contacts()
             self.write_state_file({"last_run": datetime.utcnow().isoformat()})
-            logging.info("Completed fetching blocked contacts")
+            logging.info("Completed fetching transactional contacts")
         else:
             logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")
         if self.marketing:
@@ -88,10 +95,10 @@ class Component(ComponentBase):
         if segment_id:
             params['segmentId'] = segment_id
 
-        attempts = 3
-        while attempts > 0:
+        max_attempts = 10  # Increased number of attempts
+        for attempt in range(max_attempts):
             try:
-                logging.info(f"Fetching contacts from {endpoint} with params {params}")
+                logging.info(f"Fetching contacts from {endpoint} with params {params} (Attempt {attempt + 1}/{max_attempts})")
                 async with session.get(endpoint, headers=headers, params=params) as response:
                     response.raise_for_status()
                     data = await response.json()
@@ -100,12 +107,11 @@ class Component(ComponentBase):
                     logging.info(f"Fetched {len(valid_contacts)} valid contacts at offset {offset}")
                     return valid_contacts
             except Exception as e:
-                logging.error(f"Error fetching data: {e}")
-                attempts -= 1
-                if attempts > 0:
-                    await asyncio.sleep(2 ** (3 - attempts))  # Exponential backoff
+                logging.error(f"Error fetching data on attempt {attempt + 1}: {e}")
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
                 else:
-                    logging.warning(f"Failed to fetch contacts at offset {offset} after multiple attempts")
+                    logging.warning(f"Failed to fetch contacts at offset {offset} after {max_attempts} attempts")
                     return []
 
     async def process_batches(self, headers, endpoint, batch_size, total_records, output_file_path, segment_id=None, columns=None):
@@ -145,22 +151,23 @@ class Component(ComponentBase):
                     offsets.task_done()
 
         logging.info("Starting threads for batch processing")
-        tasks = [worker() for _ in range(50)]
+        tasks = [worker() for _ in range(30)]
         await asyncio.gather(*tasks)
         logging.info("All batches processed")
 
     def get_blocked_contacts(self):
-        logging.info("Fetching blocked contacts - Initializing")
+        logging.info("Fetching transactional contacts - Initializing")
         headers = {"api-key": self.api_token, "accept": "application/json"}
         total_records = self.get_total_records(headers, BREVO_TRANSACTIONAL_ENDPOINT)
         batch_size = 100  # Adjust batch size as needed
 
+        # total_records = min(total_records, 200)
         transactional_file_path = self.create_out_table_definition('transactional_contacts.csv', incremental=True).full_path
         with open(transactional_file_path, 'w') as f:
             f.write(','.join(['email', 'reason_message', 'reason_code', 'blockedAt', 'senderEmail']) + '\n')
 
         asyncio.run(self.process_batches(headers, BREVO_TRANSACTIONAL_ENDPOINT, batch_size, total_records, transactional_file_path))
-        logging.info("Fetching blocked contacts - Completed")
+        logging.info("Fetching transactional contacts - Completed")
 
     def get_marketing_contacts(self):
         logging.info("Fetching marketing contacts - Initializing")
@@ -169,6 +176,8 @@ class Component(ComponentBase):
         total_records = self.get_total_records(headers, BREVO_MARKETING_ENDPOINT, segment_id)
         batch_size = 1000  # Adjust batch size as needed
 
+        # Limit total records to a maximum of 30000
+        # total_records = min(total_records, 2000)
         marketing_file_path = self.create_out_table_definition('marketing_contacts.csv', incremental=True).full_path
         with open(marketing_file_path, 'w') as f:
             f.write(','.join(['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt']) + '\n')
@@ -176,8 +185,36 @@ class Component(ComponentBase):
         asyncio.run(self.process_batches(headers, BREVO_MARKETING_ENDPOINT, batch_size, total_records, marketing_file_path, segment_id, columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt']))
         logging.info("Fetching marketing contacts - Completed")
 
-    def process_data(self, df, file_name, primary_keys):
-        pass
+        # Merge with the input table and add the blacklisted_timestamp
+        input_tables = self.ci.get_input_tables_definitions()
+        if input_tables:
+            input_file_path = input_tables[0].full_path
+            logging.info(f"Reading input table from {input_file_path}")
+            old_df = pd.read_csv(input_file_path)
+            logging.info(f"Input table columns: {old_df.columns}")
+            
+            if 'email' not in old_df.columns:
+                logging.error("Required column 'email' is not present in the input table")
+                return
+            
+            if 'blacklisted_timestamp' not in old_df.columns:
+                old_df['blacklisted_timestamp'] = pd.NaT
+
+            new_df = pd.read_csv(marketing_file_path)
+            
+            # Validation: Check if new_df has at least 90% of the records of old_df
+            if len(new_df) < 0.9 * len(old_df):
+                logging.warning("New data has less than 90% of the records of the old data. Using old data as output.")
+                old_df.to_csv(marketing_file_path, index=False)
+            else:
+                logging.info("Merging input table with new data")
+                merged_df = pd.merge(new_df, old_df[['email', 'blacklisted_timestamp']], how='left', on='email')
+                logging.info("Updating blacklisted_timestamp in merged data")
+                merged_df['blacklisted_timestamp'] = merged_df['blacklisted_timestamp'].fillna(datetime.now())
+                merged_df.to_csv(marketing_file_path, index=False)
+                logging.info("Updated marketing_contacts.csv with blacklisted_timestamp")
+        else:
+            logging.info("No input table found")
 
 
 if __name__ == "__main__":
