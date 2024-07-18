@@ -5,7 +5,6 @@ import logging
 from datetime import datetime
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import queue
 import gc
 import aiohttp
@@ -146,7 +145,7 @@ class Component(ComponentBase):
                     offsets.task_done()
 
         logging.info("Starting threads for batch processing")
-        tasks = [worker() for _ in range(100)]
+        tasks = [worker() for _ in range(50)]
         await asyncio.gather(*tasks)
         logging.info("All batches processed")
 
