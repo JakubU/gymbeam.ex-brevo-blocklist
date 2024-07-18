@@ -5,3 +5,4 @@ mock
 freezegun
 requests
 pandas
+aiohttp

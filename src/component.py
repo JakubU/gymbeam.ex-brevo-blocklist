@@ -5,9 +5,11 @@ import logging
 from datetime import datetime
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import queue
 import gc
+import aiohttp
+import asyncio
 
 # Configuration variables
 KEY_API_TOKEN = '#api_token'
@@ -38,7 +40,7 @@ class Component(ComponentBase):
         self.marketing = params.get(KEY_MARKETING)
 
         if not self.api_token:
-            raise UserException("API token is missing in the configuratioan.")
+            raise UserException("API token is missing in the configuration.")
 
         if self.transactional:
             logging.info("Starting to fetch blocked contacts")
@@ -82,7 +84,7 @@ class Component(ComponentBase):
 
         return 0
 
-    def fetch_contacts_batch(self, offset, batch_size, headers, endpoint, segment_id=None):
+    async def fetch_contacts_batch(self, session, offset, batch_size, headers, endpoint, segment_id=None):
         params = {"limit": batch_size, "offset": offset, "sort": "desc"}
         if segment_id:
             params['segmentId'] = segment_id
@@ -91,63 +93,61 @@ class Component(ComponentBase):
         while attempts > 0:
             try:
                 logging.info(f"Fetching contacts from {endpoint} with params {params}")
-                response = requests.get(endpoint, headers=headers, params=params)
-                response.raise_for_status()
-                data = response.json()
-                contacts = data.get('contacts', [])
-                valid_contacts = [contact for contact in contacts if contact.get('email') is not None]
-                logging.info(f"Fetched {len(valid_contacts)} valid contacts at offset {offset}")
-                return valid_contacts
-            except requests.RequestException as e:
+                async with session.get(endpoint, headers=headers, params=params) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    contacts = data.get('contacts', [])
+                    valid_contacts = [contact for contact in contacts if contact.get('email') is not None]
+                    logging.info(f"Fetched {len(valid_contacts)} valid contacts at offset {offset}")
+                    return valid_contacts
+            except Exception as e:
                 logging.error(f"Error fetching data: {e}")
                 attempts -= 1
                 if attempts > 0:
-                    time.sleep(2 ** (3 - attempts))  # Exponential backoff
+                    await asyncio.sleep(2 ** (3 - attempts))  # Exponential backoff
                 else:
                     logging.warning(f"Failed to fetch contacts at offset {offset} after multiple attempts")
                     return []
 
-    def process_batches(self, headers, endpoint, batch_size, total_records, output_file_path, segment_id=None, columns=None):
+    async def process_batches(self, headers, endpoint, batch_size, total_records, output_file_path, segment_id=None, columns=None):
         offsets = queue.Queue()
         for offset in range(0, total_records, batch_size):
             offsets.put(offset)
 
-        def worker():
-            while not offsets.empty():
-                offset = offsets.get()
-                logging.info(f"Processing batch at offset {offset}")
-                contacts = self.fetch_contacts_batch(offset, batch_size, headers, endpoint, segment_id)
-                if contacts:
-                    logging.info(f"Fetched {len(contacts)} contacts at offset {offset}")
-                    if endpoint == BREVO_TRANSACTIONAL_ENDPOINT:
-                        # Flatten 'reason' dictionary into separate columns
-                        for contact in contacts:
-                            if 'reason' in contact:
-                                contact['reason_message'] = contact['reason'].get('message')
-                                contact['reason_code'] = contact['reason'].get('code')
-                                del contact['reason']
-                        df = pd.DataFrame(contacts, columns=['email', 'reason_message', 'reason_code', 'blockedAt', 'senderEmail'])
-                    else:
-                        df = pd.DataFrame(contacts)
-                        if columns:
-                            df = df[columns]
+        async def worker():
+            async with aiohttp.ClientSession() as session:
+                while not offsets.empty():
+                    offset = offsets.get()
+                    logging.info(f"Processing batch at offset {offset}")
+                    contacts = await self.fetch_contacts_batch(session, offset, batch_size, headers, endpoint, segment_id)
+                    if contacts:
+                        logging.info(f"Fetched {len(contacts)} contacts at offset {offset}")
+                        if endpoint == BREVO_TRANSACTIONAL_ENDPOINT:
+                            # Flatten 'reason' dictionary into separate columns
+                            for contact in contacts:
+                                if 'reason' in contact:
+                                    contact['reason_message'] = contact['reason'].get('message')
+                                    contact['reason_code'] = contact['reason'].get('code')
+                                    del contact['reason']
+                            df = pd.DataFrame(contacts, columns=['email', 'reason_message', 'reason_code', 'blockedAt', 'senderEmail'])
+                        else:
+                            df = pd.DataFrame(contacts)
+                            if columns:
+                                df = df[columns]
 
-                    logging.info(f"Writing batch to CSV at offset {offset}")
-                    df.to_csv(output_file_path, mode='a', header=False, index=False)
-                    del df
-                    del contacts
-                    gc.collect()
-                    logging.info(f"Completed processing batch at offset {offset}")
-                else:
-                    logging.info(f"No contacts fetched at offset {offset}")
-                offsets.task_done()
+                        logging.info(f"Writing batch to CSV at offset {offset}")
+                        df.to_csv(output_file_path, mode='a', header=False, index=False)
+                        del df
+                        del contacts
+                        gc.collect()
+                        logging.info(f"Completed processing batch at offset {offset}")
+                    else:
+                        logging.info(f"No contacts fetched at offset {offset}")
+                    offsets.task_done()
 
         logging.info("Starting threads for batch processing")
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            for _ in range(10):
-                executor.submit(worker)
-
-        offsets.join()  # Wait until all offsets have been processed
+        tasks = [worker() for _ in range(100)]
+        await asyncio.gather(*tasks)
         logging.info("All batches processed")
 
     def get_blocked_contacts(self):
@@ -160,7 +160,7 @@ class Component(ComponentBase):
         with open(transactional_file_path, 'w') as f:
             f.write(','.join(['email', 'reason_message', 'reason_code', 'blockedAt', 'senderEmail']) + '\n')
 
-        self.process_batches(headers, BREVO_TRANSACTIONAL_ENDPOINT, batch_size, total_records, transactional_file_path)
+        asyncio.run(self.process_batches(headers, BREVO_TRANSACTIONAL_ENDPOINT, batch_size, total_records, transactional_file_path))
         logging.info("Fetching blocked contacts - Completed")
 
     def get_marketing_contacts(self):
@@ -174,7 +174,7 @@ class Component(ComponentBase):
         with open(marketing_file_path, 'w') as f:
             f.write(','.join(['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt']) + '\n')
 
-        self.process_batches(headers, BREVO_MARKETING_ENDPOINT, batch_size, total_records, marketing_file_path, segment_id, columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt'])
+        asyncio.run(self.process_batches(headers, BREVO_MARKETING_ENDPOINT, batch_size, total_records, marketing_file_path, segment_id, columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt']))
         logging.info("Fetching marketing contacts - Completed")
 
     def process_data(self, df, file_name, primary_keys):
