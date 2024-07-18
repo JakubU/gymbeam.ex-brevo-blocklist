@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from keboola.component.base import ComponentBase
 from keboola.component.exceptions import UserException
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import queue
 import gc
 
