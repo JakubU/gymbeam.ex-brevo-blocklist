@@ -191,16 +191,13 @@ class Component(ComponentBase):
             logging.info(f"Reading input table from {input_file_path}")
             old_df = pd.read_csv(input_file_path)
             logging.info(f"Input table columns: {old_df.columns}")
-            
             if 'email' not in old_df.columns:
                 logging.error("Required column 'email' is not present in the input table")
                 return
-            
             if 'blacklisted_timestamp' not in old_df.columns:
                 old_df['blacklisted_timestamp'] = pd.NaT
 
             new_df = pd.read_csv(marketing_file_path)
-            
             # Validation: Check if new_df has at least 90% of the records of old_df
             if len(new_df) < 0.9 * len(old_df):
                 logging.warning("New data has less than 90% of the records of the old data. Using old data as output.")
