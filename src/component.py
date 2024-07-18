@@ -143,7 +143,7 @@ class Component(ComponentBase):
                 offsets.task_done()
 
         logging.info("Starting threads for batch processing")
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ThreadPoolExecutor(max_workers=20) as executor:
             for _ in range(10):
                 executor.submit(worker)
 
