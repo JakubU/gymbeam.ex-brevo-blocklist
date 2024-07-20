@@ -10,7 +10,7 @@ import gc
 import aiohttp
 import asyncio
 from keboola.component import CommonInterface
-import os
+
 
 # Configuration variables
 KEY_API_TOKEN = '#api_token'
@@ -23,7 +23,7 @@ BREVO_TRANSACTIONAL_ENDPOINT = "https://api.brevo.com/v3/smtp/blockedContacts"
 BREVO_MARKETING_ENDPOINT = "https://api.brevo.com/v3/contacts"
 
 # Set the data directory for local testing
-#if not os.path.exists('/data/'):
+# if not os.path.exists('/data/'):
 #    os.environ['KBC_DATADIR'] = './data'
 
 
@@ -38,7 +38,6 @@ class Component(ComponentBase):
 
     def run(self):
         logging.info("Starting the component run process")
-        
         params = self.configuration.parameters
         self.api_token = params.get(KEY_API_TOKEN)
         self.start_date = params.get(KEY_START_DATE)
@@ -55,8 +54,7 @@ class Component(ComponentBase):
             self.write_state_file({"last_run": datetime.utcnow().isoformat()})
             logging.info("Completed fetching transactional contacts")
         else:
-            logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")
-        
+            logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")      
         if self.marketing:
             logging.info("Starting to fetch marketing contacts")
             self.get_marketing_contacts()
