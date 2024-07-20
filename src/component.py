@@ -54,7 +54,7 @@ class Component(ComponentBase):
             self.write_state_file({"last_run": datetime.utcnow().isoformat()})
             logging.info("Completed fetching transactional contacts")
         else:
-            logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")      
+            logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")
         if self.marketing:
             logging.info("Starting to fetch marketing contacts")
             self.get_marketing_contacts()
