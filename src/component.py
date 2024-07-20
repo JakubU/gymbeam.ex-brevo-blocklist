@@ -10,6 +10,7 @@ import gc
 import aiohttp
 import asyncio
 from keboola.component import CommonInterface
+import os
 
 # Configuration variables
 KEY_API_TOKEN = '#api_token'
@@ -22,7 +23,7 @@ BREVO_TRANSACTIONAL_ENDPOINT = "https://api.brevo.com/v3/smtp/blockedContacts"
 BREVO_MARKETING_ENDPOINT = "https://api.brevo.com/v3/contacts"
 
 # Set the data directory for local testing
-# if not os.path.exists('/data/'):
+#if not os.path.exists('/data/'):
 #    os.environ['KBC_DATADIR'] = './data'
 
 
@@ -37,6 +38,7 @@ class Component(ComponentBase):
 
     def run(self):
         logging.info("Starting the component run process")
+        
         params = self.configuration.parameters
         self.api_token = params.get(KEY_API_TOKEN)
         self.start_date = params.get(KEY_START_DATE)
@@ -54,6 +56,7 @@ class Component(ComponentBase):
             logging.info("Completed fetching transactional contacts")
         else:
             logging.info("Transactional parameter is not set to true. Skipping the data fetch process for transactional contacts.")
+        
         if self.marketing:
             logging.info("Starting to fetch marketing contacts")
             self.get_marketing_contacts()
@@ -160,7 +163,6 @@ class Component(ComponentBase):
         total_records = self.get_total_records(headers, BREVO_TRANSACTIONAL_ENDPOINT)
         batch_size = 100  # Adjust batch size as needed
 
-        # total_records = min(total_records, 200)
         transactional_file_path = self.create_out_table_definition('transactional_contacts.csv', incremental=True).full_path
         with open(transactional_file_path, 'w') as f:
             f.write(','.join(['email', 'reason_message', 'reason_code', 'blockedAt', 'senderEmail']) + '\n')
@@ -175,42 +177,12 @@ class Component(ComponentBase):
         total_records = self.get_total_records(headers, BREVO_MARKETING_ENDPOINT, segment_id)
         batch_size = 1000  # Adjust batch size as needed
 
-        # Limit total records to a maximum of 30000
-        # total_records = min(total_records, 2000)
         marketing_file_path = self.create_out_table_definition('marketing_contacts.csv', incremental=True).full_path
         with open(marketing_file_path, 'w') as f:
             f.write(','.join(['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt']) + '\n')
 
         asyncio.run(self.process_batches(headers, BREVO_MARKETING_ENDPOINT, batch_size, total_records, marketing_file_path, segment_id, columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt']))
         logging.info("Fetching marketing contacts - Completed")
-
-        # Merge with the input table and add the blacklisted_timestamp
-        input_tables = self.ci.get_input_tables_definitions()
-        if input_tables:
-            input_file_path = input_tables[0].full_path
-            logging.info(f"Reading input table from {input_file_path}")
-            old_df = pd.read_csv(input_file_path)
-            logging.info(f"Input table columns: {old_df.columns}")
-            if 'email' not in old_df.columns:
-                logging.error("Required column 'email' is not present in the input table")
-                return
-            if 'blacklisted_timestamp' not in old_df.columns:
-                old_df['blacklisted_timestamp'] = pd.NaT
-
-            new_df = pd.read_csv(marketing_file_path)
-            # Validation: Check if new_df has at least 90% of the records of old_df
-            if len(new_df) < 0.9 * len(old_df):
-                logging.warning("New data has less than 90% of the records of the old data. Using old data as output.")
-                old_df.to_csv(marketing_file_path, index=False)
-            else:
-                logging.info("Merging input table with new data")
-                merged_df = pd.merge(new_df, old_df[['email', 'blacklisted_timestamp']], how='left', on='email')
-                logging.info("Updating blacklisted_timestamp in merged data")
-                merged_df['blacklisted_timestamp'] = merged_df['blacklisted_timestamp'].fillna(datetime.now())
-                merged_df.to_csv(marketing_file_path, index=False)
-                logging.info("Updated marketing_contacts.csv with blacklisted_timestamp")
-        else:
-            logging.info("No input table found")
 
 
 if __name__ == "__main__":
