@@ -71,11 +71,6 @@ The component configuration is defined in `config.json` and includes the followi
 - Saves the data in the `marketing_contacts.csv` file.
 - Columns include: `id`, `email`, `emailBlacklisted`, `smsBlacklisted`, `createdAt`, `modifiedAt`.
 
-### Merging Data
-
-- If an input table is provided, it merges the new data with the old data using the `email` column.
-- Updates the `blacklisted_timestamp` column if it exists; otherwise, it adds this column and fills missing values with the current timestamp.
-- Ensures that the new data has at least 90% of the records compared to the old data; otherwise, it uses the old data as output.
 
 ## Output
 
@@ -84,7 +79,7 @@ The component outputs two CSV files:
 - `transactional_contacts.csv`: Contains fetched blocked contacts.
   - Columns: `email`, `reason_message`, `reason_code`, `blockedAt`, `senderEmail`.
 - `marketing_contacts.csv`: Contains fetched marketing contacts.
-  - Columns: `id`, `email`, `emailBlacklisted`, `smsBlacklisted`, `createdAt`, `modifiedAt`, `blacklisted_timestamp`.
+  - Columns: `id`, `email`, `emailBlacklisted`, `smsBlacklisted`, `createdAt`, `modifiedAt`.
 
 Development
 -----------
