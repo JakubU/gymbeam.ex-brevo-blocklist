@@ -11,7 +11,6 @@ import aiohttp
 import asyncio
 from keboola.component import CommonInterface
 
-
 # Configuration variables
 KEY_API_TOKEN = '#api_token'
 KEY_START_DATE = 'start_date'
@@ -22,10 +21,10 @@ KEY_MARKETING = 'marketing'
 BREVO_TRANSACTIONAL_ENDPOINT = "https://api.brevo.com/v3/smtp/blockedContacts"
 BREVO_MARKETING_ENDPOINT = "https://api.brevo.com/v3/contacts"
 
+
 # Set the data directory for local testing
 # if not os.path.exists('/data/'):
 #    os.environ['KBC_DATADIR'] = './data'
-
 
 class Component(ComponentBase):
     def __init__(self):
@@ -95,7 +94,7 @@ class Component(ComponentBase):
         if segment_id:
             params['segmentId'] = segment_id
 
-        max_attempts = 10  # Increased number of attempts
+        max_attempts = 10
         for attempt in range(max_attempts):
             try:
                 logging.info(f"Fetching contacts from {endpoint} with params {params} (Attempt {attempt + 1}/{max_attempts})")
@@ -116,6 +115,8 @@ class Component(ComponentBase):
 
     async def process_batches(self, headers, endpoint, batch_size, total_records, output_file_path, segment_id=None, columns=None):
         offsets = queue.Queue()
+        all_data = []
+
         for offset in range(0, total_records, batch_size):
             offsets.put(offset)
 
@@ -128,7 +129,6 @@ class Component(ComponentBase):
                     if contacts:
                         logging.info(f"Fetched {len(contacts)} contacts at offset {offset}")
                         if endpoint == BREVO_TRANSACTIONAL_ENDPOINT:
-                            # Flatten 'reason' dictionary into separate columns
                             for contact in contacts:
                                 if 'reason' in contact:
                                     contact['reason_message'] = contact['reason'].get('message')
@@ -140,12 +140,11 @@ class Component(ComponentBase):
                             if columns:
                                 df = df[columns]
 
-                        logging.info(f"Writing batch to CSV at offset {offset}")
-                        df.to_csv(output_file_path, mode='a', header=False, index=False)
+                        all_data.append(df)
+                        logging.info(f"Added {len(df)} records to the main DataFrame")
                         del df
                         del contacts
                         gc.collect()
-                        logging.info(f"Completed processing batch at offset {offset}")
                     else:
                         logging.info(f"No contacts fetched at offset {offset}")
                     offsets.task_done()
@@ -155,15 +154,19 @@ class Component(ComponentBase):
         await asyncio.gather(*tasks)
         logging.info("All batches processed")
 
+        # Kombinácia všetkých DataFrames a zápis do CSV
+        if all_data:
+            final_df = pd.concat(all_data, ignore_index=True)
+            logging.info(f"Writing {len(final_df)} total records to CSV")
+            final_df.to_csv(output_file_path, index=False)
+
     def get_blocked_contacts(self):
         logging.info("Fetching transactional contacts - Initializing")
         headers = {"api-key": self.api_token, "accept": "application/json"}
         total_records = self.get_total_records(headers, BREVO_TRANSACTIONAL_ENDPOINT)
-        batch_size = 100  # Adjust batch size as needed
+        batch_size = 100
 
         transactional_file_path = self.create_out_table_definition('transactional_contacts.csv', incremental=True).full_path
-        with open(transactional_file_path, 'w') as f:
-            f.write(','.join(['email', 'reason_message', 'reason_code', 'blockedAt', 'senderEmail']) + '\n')
 
         asyncio.run(self.process_batches(headers, BREVO_TRANSACTIONAL_ENDPOINT, batch_size, total_records, transactional_file_path))
         logging.info("Fetching transactional contacts - Completed")
@@ -173,13 +176,19 @@ class Component(ComponentBase):
         headers = {"api-key": self.api_token, "accept": "application/json"}
         segment_id = 8
         total_records = self.get_total_records(headers, BREVO_MARKETING_ENDPOINT, segment_id)
-        batch_size = 1000  # Adjust batch size as needed
+        batch_size = 1000
 
         marketing_file_path = self.create_out_table_definition('marketing_contacts.csv', incremental=True).full_path
-        with open(marketing_file_path, 'w') as f:
-            f.write(','.join(['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt']) + '\n')
 
-        asyncio.run(self.process_batches(headers, BREVO_MARKETING_ENDPOINT, batch_size, total_records, marketing_file_path, segment_id, columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt']))
+        asyncio.run(self.process_batches(
+            headers=headers,
+            endpoint=BREVO_MARKETING_ENDPOINT,
+            batch_size=batch_size,
+            total_records=total_records,
+            output_file_path=marketing_file_path,
+            segment_id=segment_id,
+            columns=['id', 'email', 'emailBlacklisted', 'smsBlacklisted', 'createdAt', 'modifiedAt']
+        ))
         logging.info("Fetching marketing contacts - Completed")
 
 
