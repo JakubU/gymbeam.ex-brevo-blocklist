@@ -152,7 +152,7 @@ class Component(ComponentBase):
                     offsets.task_done()
 
         logging.info("Starting threads for batch processing")
-        tasks = [worker() for _ in range(16)]
+        tasks = [worker() for _ in range(10)]
         await asyncio.gather(*tasks)
         logging.info("All batches processed")
 
@@ -174,7 +174,7 @@ class Component(ComponentBase):
         headers = {"api-key": self.api_token, "accept": "application/json"}
         segment_id = 8
         total_records = self.get_total_records(headers, BREVO_MARKETING_ENDPOINT, segment_id)
-        batch_size = 700  # Adjust batch size as needed
+        batch_size = 500  # Adjust batch size as needed
 
         marketing_file_path = self.create_out_table_definition('marketing_contacts.csv', incremental=True).full_path
         with open(marketing_file_path, 'w') as f:
